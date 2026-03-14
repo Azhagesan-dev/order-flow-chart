@@ -5,6 +5,19 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.html).
 
+## [2.1.0] - 2026-03-14
+
+### Added
+
+-   **Major Tick Database Support**: Introduced a robust system for tick storage, enabling more granular data analysis.
+-   **CSV Data Import**: Added the ability to import market data from CSV files.
+-   **New Orderflow Display Modes**:
+    -   **Delta Mode**: Visualizes the net difference between buying and selling pressure at each price level.
+    -   **Profile Mode**: Integrated intra-bar volume profile for detailed activity viewing.
+    -   **Dual Side Profile Mode**: Compare bid and ask volume profiles side-by-side within a single candle.
+-   **"Goto Date" Navigation**: Quickly jump to specific historical dates in the chart.
+-   **Optional Broker Connectivity**: Support for connecting to brokers is now optional, allowing for offline analysis of stored data.
+
 ## [2.0.0] - 2025-09-14
 
 This release marks a complete rewrite of the frontend visualization engine, migrating from the D3.js library to **Lightweight Charts**. This fundamental change introduces massive performance gains, a highly interactive user experience, and a suite of powerful new analytical features.
