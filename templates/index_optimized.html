@@ -1,0 +1,1644 @@
+<!doctype html>
+<html lang="en">
+
+<head>
+    <meta charset="utf-8" />
+    <title>Lightweight Charts – Live Footprint from Raw Ticks (Optimized)</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <style>
+        :root {
+            color-scheme: dark;
+        }
+
+        body {
+            margin: 0;
+            font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, "Apple Color Emoji", "Segoe UI Emoji";
+            background: #0b1020;
+            color: #cbd5e1;
+        }
+
+        .toolbar {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 12px;
+            align-items: center;
+            padding: 10px 14px;
+            border-bottom: 1px solid #1f2937;
+            background: #111827;
+            position: sticky;
+            top: 0;
+            z-index: 10;
+        }
+
+        .toolbar label {
+            display: inline-flex;
+            gap: 6px;
+            align-items: center;
+            font-size: 13px;
+            color: #e5e7eb;
+        }
+
+        .toolbar select,
+        .toolbar input[type="number"],
+        .toolbar button {
+            background: #0b1020;
+            color: #e5e7eb;
+            border: 1px solid #374151;
+            border-radius: 6px;
+            padding: 4px 8px;
+        }
+
+        .toolbar .group {
+            display: inline-flex;
+            gap: 8px;
+            align-items: center;
+            padding-right: 6px;
+            border-right: 1px dashed #233044;
+        }
+
+        .toolbar .group:last-child {
+            border-right: none;
+        }
+
+        #status {
+            color: #f59e0b;
+            font-size: 13px;
+        }
+
+        .wrap {
+            height: 82vh;
+            min-height: 420px;
+            padding: 12px;
+        }
+
+        #chart-wrap {
+            position: relative;
+            width: 100%;
+            height: 100%;
+            border: 1px solid #1f2937;
+            border-radius: 8px;
+            overflow: hidden;
+            background: #0b1020;
+        }
+
+        #chart {
+            position: absolute;
+            inset: 0;
+        }
+
+        #footprint-canvas {
+            position: absolute;
+            inset: 0;
+            pointer-events: none;
+            z-index: 1000;
+        }
+
+        .legend {
+            position: absolute;
+            left: 12px;
+            top: 12px;
+            font-size: 12px;
+            background: rgba(2, 6, 23, 0.7);
+            border: 1px solid rgba(148, 163, 184, 0.2);
+            backdrop-filter: blur(6px);
+            border-radius: 6px;
+            padding: 6px 8px;
+            color: #e5e7eb;
+            z-index: 5;
+        }
+
+        .legend b {
+            color: #fff;
+        }
+
+        /* Broker Connection Controls */
+        .broker-controls {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .broker-btn {
+            padding: 5px 12px;
+            border-radius: 6px;
+            font-size: 12px;
+            font-weight: 500;
+            cursor: pointer;
+            transition: all 0.2s ease;
+            border: 1px solid;
+        }
+
+        .broker-btn.connect {
+            background: rgba(16, 185, 129, 0.15);
+            border-color: #10b981;
+            color: #10b981;
+        }
+
+        .broker-btn.connect:hover {
+            background: rgba(16, 185, 129, 0.3);
+        }
+
+        .broker-btn.disconnect {
+            background: rgba(239, 68, 68, 0.15);
+            border-color: #ef4444;
+            color: #ef4444;
+        }
+
+        .broker-btn.disconnect:hover {
+            background: rgba(239, 68, 68, 0.3);
+        }
+
+        .broker-btn:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+
+        .status-indicator {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            font-size: 12px;
+            padding: 4px 8px;
+            border-radius: 4px;
+            background: rgba(0, 0, 0, 0.3);
+        }
+
+        .status-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            animation: none;
+        }
+
+        .status-dot.disconnected {
+            background: #ef4444;
+        }
+
+        .status-dot.connecting {
+            background: #f59e0b;
+            animation: pulse 1s infinite;
+        }
+
+        .status-dot.connected {
+            background: #10b981;
+        }
+
+        @keyframes pulse {
+
+            0%,
+            100% {
+                opacity: 1;
+            }
+
+            50% {
+                opacity: 0.4;
+            }
+        }
+
+        .loading-indicator {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            background: rgba(2, 6, 23, 0.9);
+            padding: 12px 24px;
+            border-radius: 8px;
+            border: 1px solid #374151;
+            color: #e5e7eb;
+            font-size: 14px;
+            z-index: 1001;
+            display: none;
+        }
+
+        /* Modal Styles */
+        .modal {
+            display: none;
+            position: fixed;
+            z-index: 2000;
+            left: 0;
+            top: 0;
+            width: 100%;
+            height: 100%;
+            overflow: auto;
+            background-color: rgba(0, 0, 0, 0.5);
+            align-items: center;
+            justify-content: center;
+        }
+
+        .modal-content {
+            background-color: #1f2937;
+            border: 1px solid #374151;
+            border-radius: 8px;
+            padding: 20px;
+            text-align: center;
+            box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
+        }
+
+        .modal-buttons {
+            margin-top: 20px;
+            display: flex;
+            justify-content: center;
+            gap: 10px;
+        }
+
+        .modal-btn {
+            padding: 8px 16px;
+            border-radius: 6px;
+            cursor: pointer;
+            border: none;
+            font-weight: 500;
+            color: white;
+        }
+
+        .modal-btn.yes {
+            background-color: #10b981;
+        }
+
+        .modal-btn.no {
+            background-color: #ef4444;
+        }
+    </style>
+</head>
+
+<body>
+    <div class="toolbar">
+        <div class="group">
+            <label>Interval (min) <input id="interval-min" type="number" min="1" max="60" step="1" value="5"
+                    style="width:60px" /></label>
+            <label>Tick Size <input id="tick-size" type="number" min="0.01" max="100" step="0.01" value="2"
+                    style="width:70px" /></label>
+            <button id="update-settings">Apply Settings</button>
+            <span id="status"></span>
+        </div>
+        <div class="group">
+            <label>Go to: <input id="goto-date" type="date"
+                    style="background:#0b1020; color:#e5e7eb; border:1px solid #374151; padding:4px; border-radius:4px;" /></label>
+        </div>
+        <div class="group">
+            <label>Placement
+                <select id="placement">
+                    <option value="side">Side-by-side</option>
+                    <option value="overlay">Overlay</option>
+                </select>
+            </label>
+            <label><input id="show-candle" type="checkbox" checked /> Candle</label>
+            <label><input id="show-footprint" type="checkbox" checked /> Footprint</label>
+            <label><input id="show-profile" type="checkbox" /> Profile</label>
+        </div>
+
+        <div class="group" title="Side-by-side panel widths (normalized)">
+            <label>C% <input id="split-c" type="number" min="0" max="100" step="5" value="20"
+                    style="width:60px" /></label>
+            <label>F% <input id="split-f" type="number" min="0" max="100" step="5" value="80"
+                    style="width:60px" /></label>
+            <label>P% <input id="split-p" type="number" min="0" max="100" step="5" value="0"
+                    style="width:60px" /></label>
+            <label>Gap <input id="panel-gap" type="number" min="0" max="12" step="1" value="2"
+                    style="width:60px" /></label>
+            <label>Slot pad <input id="slot-pad" type="number" min="0" max="8" step="1" value="1"
+                    style="width:70px" /></label>
+            <button id="preset-cf">20/80</button>
+            <button id="preset-fp">50/50</button>
+            <button id="preset-all">20/50/30</button>
+        </div>
+
+        <div class="group">
+            <label><input id="toggle-numbers" type="checkbox" checked /> Numbers</label>
+            <label><input id="toggle-heat" type="checkbox" checked /> Heat</label>
+            <label><input id="toggle-outline" type="checkbox" /> Outlines</label>
+            <label><input id="toggle-poc" type="checkbox" checked /> POC</label>
+            <label><input id="toggle-ltp" type="checkbox" checked /> LTP Line</label>
+            <label><input id="toggle-stats" type="checkbox" checked /> Stats (Δ, minΔ, maxΔ, Vol, cumΔ)</label>
+        </div>
+
+        <div class="group" title="Right-side split profile">
+            <label>Right profile
+                <select id="right-prof-mode">
+                    <option value="off">Off</option>
+                    <option value="visible">Visible range</option>
+                    <option value="session">Session</option>
+                </select>
+            </label>
+            <label>Width <input id="right-prof-width" type="number" min="30" max="220" step="5" value="90"
+                    style="width:70px" /></label>
+            <label>Gap <input id="right-prof-gap" type="number" min="0" max="200" step="1" value="70"
+                    style="width:60px" /></label>
+        </div>
+
+        <div class="group broker-controls">
+            <div class="status-indicator">
+                <span id="broker-status-dot" class="status-dot disconnected"></span>
+                <span id="broker-status-text">Disconnected</span>
+            </div>
+            <button id="broker-connect-btn" class="broker-btn connect">Connect</button>
+        </div>
+    </div>
+
+    <div class="wrap">
+        <div id="chart-wrap">
+            <div id="chart"></div>
+            <canvas id="footprint-canvas"></canvas>
+            <div class="legend">
+                <div><b>Live Footprint from Raw Ticks (Optimized)</b></div>
+                <div>• Client-side aggregation from raw tick data</div>
+                <div>• Dynamic timeframe and tick size adjustment</div>
+                <div>• Incremental updates for optimal performance</div>
+            </div>
+            <div id="loading-indicator" class="loading-indicator">Loading...</div>
+        </div>
+    </div>
+
+    <!-- Confirmation Modal -->
+    <div id="load-confirm-modal" class="modal">
+        <div class="modal-content">
+            <h3 id="modal-title" style="margin-top:0; color:#e5e7eb;">Load Data?</h3>
+            <p id="modal-msg" style="color:#9ca3af; margin-bottom:20px;">Do you want to load data for ...?</p>
+            <div class="modal-buttons">
+                <button id="modal-yes" class="modal-btn yes">Yes</button>
+                <button id="modal-no" class="modal-btn no">No</button>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://unpkg.com/lightweight-charts@4.2.1/dist/lightweight-charts.standalone.production.js"></script>
+    <script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
+
+    <script>
+        const { createChart, CrosshairMode } = LightweightCharts;
+        const BG_COLOR = '#0b1020';
+
+        // ---------- Configuration ----------
+        let config = {
+            intervalMinutes: 5,
+            tickSize: 2,
+        };
+
+        // ---------- Live Data Storage ----------
+        const rawTicks = []; // Store all raw ticks
+        const liveData = {
+            bars: [],
+            footprints: new Map(),
+        };
+        const barStats = new Map();
+
+        // ---------- Chart Initialization ----------
+        const chartContainer = document.getElementById('chart');
+        const fpCanvas = document.getElementById('footprint-canvas');
+        const chart = createChart(chartContainer, {
+            layout: { background: { type: 'solid', color: BG_COLOR }, textColor: '#cbd5e1', attributionLogo: false },
+            rightPriceScale: { borderVisible: false },
+
+            timeScale: {
+                borderVisible: false,
+                timeVisible: true,
+                secondsVisible: true,
+                fixLeftEdge: false,
+
+                tickMarkFormatter: (time, tickMarkType, locale) => {
+                    const date = new Date(time * 1000);
+                    return date.toLocaleTimeString(locale, {
+                        timeZone: 'Asia/Kolkata',
+                        hour: '2-digit',
+                        minute: '2-digit',
+                        second: '2-digit',
+                        hour12: false
+                    });
+                },
+            },
+
+            localization: {
+                timeFormatter: (time) => {
+                    const date = new Date(time * 1000);
+                    return date.toLocaleString('en-GB', {
+                        timeZone: 'Asia/Kolkata',
+                        day: '2-digit',
+                        month: 'short',
+                        year: 'numeric',
+                        hour: '2-digit',
+                        minute: '2-digit',
+                        second: '2-digit',
+                        hour12: false,
+                    });
+                }
+            },
+            grid: { vertLines: { color: '#111827', style: 0 }, horzLines: { color: '#111827', style: 0 } },
+            crosshair: { mode: CrosshairMode.Normal, vertLine: { width: 1, color: 'rgba(148,163,184,0.4)' }, horzLine: { width: 1, color: 'rgba(148,163,184,0.4)' } },
+            width: chartContainer.clientWidth,
+            height: chartContainer.clientHeight,
+        });
+        const defaultCandleColors = {
+            upColor: '#10b981', downColor: '#ef4444',
+            borderUpColor: '#10b981', borderDownColor: '#ef4444',
+            wickUpColor: '#10b981', wickDownColor: '#ef4444',
+        };
+        const candleSeries = chart.addCandlestickSeries({ ...defaultCandleColors });
+
+        // ---------- Options / UI ----------
+        const opts = {
+            placement: 'side', showCandle: true, showFootprint: true, showProfile: false,
+            split: { c: 20, f: 80, p: 0 }, panelGapPx: 2, slotPadPx: 1,
+            drawNumbers: true, heat: true, outlines: false, showPOC: true, showLTP: true, showStats: true,
+            rightProfileMode: 'off', rightProfileWidth: 90, rightProfileGap: 70, valueAreaPct: 0.70,
+        };
+        const $ = (id) => document.getElementById(id);
+        $('placement').addEventListener('change', e => { opts.placement = e.target.value; syncCandleVisibility(); draw(); });
+        $('show-candle').addEventListener('change', e => { opts.showCandle = e.target.checked; syncCandleVisibility(); draw(); });
+        $('show-footprint').addEventListener('change', e => { opts.showFootprint = e.target.checked; draw(); });
+        $('show-profile').addEventListener('change', e => { opts.showProfile = e.target.checked; draw(); });
+        $('split-c').addEventListener('change', e => { opts.split.c = Math.max(0, Number(e.target.value || 0)); draw(); });
+        $('split-f').addEventListener('change', e => { opts.split.f = Math.max(0, Number(e.target.value || 0)); draw(); });
+        $('split-p').addEventListener('change', e => { opts.split.p = Math.max(0, Number(e.target.value || 0)); draw(); });
+        $('panel-gap').addEventListener('change', e => { opts.panelGapPx = Math.max(0, Number(e.target.value || 0)); draw(); });
+        $('slot-pad').addEventListener('change', e => { opts.slotPadPx = Math.max(0, Number(e.target.value || 0)); draw(); });
+        $('preset-cf').addEventListener('click', () => { opts.split = { c: 20, f: 80, p: 0 }; $('split-c').value = 20; $('split-f').value = 80; $('split-p').value = 0; draw(); });
+        $('preset-fp').addEventListener('click', () => { opts.split = { c: 0, f: 50, p: 50 }; $('split-c').value = 0; $('split-f').value = 50; $('split-p').value = 50; draw(); });
+        $('preset-all').addEventListener('click', () => { opts.split = { c: 20, f: 50, p: 30 }; $('split-c').value = 20; $('split-f').value = 50; $('split-p').value = 30; draw(); });
+        $('toggle-numbers').addEventListener('change', e => { opts.drawNumbers = e.target.checked; draw(); });
+        $('toggle-heat').addEventListener('change', e => { opts.heat = e.target.checked; draw(); });
+        $('toggle-outline').addEventListener('change', e => { opts.outlines = e.target.checked; draw(); });
+        $('toggle-poc').addEventListener('change', e => { opts.showPOC = e.target.checked; draw(); });
+        $('toggle-ltp').addEventListener('change', e => { opts.showLTP = e.target.checked; draw(); });
+        $('toggle-stats').addEventListener('change', e => { opts.showStats = e.target.checked; draw(); });
+        $('right-prof-mode').addEventListener('change', e => { opts.rightProfileMode = e.target.value; draw(); });
+        $('right-prof-width').addEventListener('change', e => { opts.rightProfileWidth = Math.max(30, Number(e.target.value || 90)); draw(); });
+        $('right-prof-gap').addEventListener('change', e => { opts.rightProfileGap = Math.max(0, Number(e.target.value || 60)); draw(); });
+
+        // ---------- Tick Aggregation Logic ----------
+        function getTimeBucket(timestamp, intervalMinutes) {
+            const date = new Date(timestamp * 1000);
+            const minutes = Math.floor(date.getMinutes() / intervalMinutes) * intervalMinutes;
+            date.setMinutes(minutes, 0, 0);
+            return Math.floor(date.getTime() / 1000);
+        }
+
+        function aggregateTicksToCandles() {
+            // Clear existing data
+            liveData.bars = [];
+            liveData.footprints.clear();
+            barStats.clear();
+
+            if (rawTicks.length === 0) return;
+
+            // Group ticks by time bucket
+            const buckets = new Map();
+
+            for (const tick of rawTicks) {
+                const bucketTime = getTimeBucket(tick.timestamp, config.intervalMinutes);
+
+                if (!buckets.has(bucketTime)) {
+                    buckets.set(bucketTime, {
+                        time: bucketTime,
+                        ticks: []
+                    });
+                }
+
+                buckets.get(bucketTime).ticks.push(tick);
+            }
+
+            // Convert buckets to candles
+            const sortedBuckets = Array.from(buckets.values()).sort((a, b) => a.time - b.time);
+            let lastCumDelta = 0;
+            let lastTradingDay = null;
+
+            for (const bucket of sortedBuckets) {
+                if (bucket.ticks.length === 0) continue;
+
+                // Reset cumulative delta on new trading day
+                const barDate = new Date(bucket.time * 1000);
+                const currentTradingDay = Date.UTC(barDate.getUTCFullYear(), barDate.getUTCMonth(), barDate.getUTCDate(), 0, 0, 0, 0);
+
+                if (lastTradingDay !== null && currentTradingDay !== lastTradingDay) {
+                    lastCumDelta = 0;
+                }
+                lastTradingDay = currentTradingDay;
+
+                // Calculate OHLC
+                let open = bucket.ticks[0].price;
+                let high = bucket.ticks[0].price;
+                let low = bucket.ticks[0].price;
+                let close = bucket.ticks[bucket.ticks.length - 1].price;
+
+                // Build footprint levels
+                const levels = new Map();
+
+                for (const tick of bucket.ticks) {
+                    const priceLevel = Math.round(tick.price / config.tickSize) * config.tickSize;
+
+                    // Update OHLC
+                    if (tick.price > high) high = tick.price;
+                    if (tick.price < low) low = tick.price;
+
+                    // Update footprint
+                    if (!levels.has(priceLevel)) {
+                        levels.set(priceLevel, { price: priceLevel, bidVol: 0, askVol: 0 });
+                    }
+
+                    if (tick.direction === 'BUY') {
+                        levels.get(priceLevel).askVol += tick.volume;
+                    } else {
+                        levels.get(priceLevel).bidVol += tick.volume;
+                    }
+                }
+
+                // Convert levels map to array
+                const levelsArray = Array.from(levels.values()).sort((a, b) => b.price - a.price);
+
+                // Store bar data
+                const barData = {
+                    time: bucket.time,
+                    open: open,
+                    high: high,
+                    low: low,
+                    close: close
+                };
+
+                liveData.bars.push(barData);
+                liveData.footprints.set(bucket.time, levelsArray);
+
+                // Calculate stats
+                let sumAsk = 0, sumBid = 0, minD = Infinity, maxD = -Infinity;
+                for (const lv of levelsArray) {
+                    sumAsk += lv.askVol;
+                    sumBid += lv.bidVol;
+                    const d = lv.askVol - lv.bidVol;
+                    if (d < minD) minD = d;
+                    if (d > maxD) maxD = d;
+                }
+
+                const delta = sumAsk - sumBid;
+                const total = sumAsk + sumBid;
+                const minDeltaMag = Math.abs(Math.min(0, Number.isFinite(minD) ? minD : 0));
+                const maxDeltaMag = Math.max(0, Number.isFinite(maxD) ? maxD : 0);
+                const cumDelta = lastCumDelta + delta;
+
+                barStats.set(bucket.time, { delta, total, minDeltaMag, maxDeltaMag, cumDelta });
+                lastCumDelta = cumDelta;
+            }
+
+            // Update chart
+            candleSeries.setData(liveData.bars);
+            draw();
+        }
+
+        function processIncomingTick(tick) {
+            // Add to raw ticks
+            rawTicks.push(tick);
+
+            // Get the bucket for this tick
+            const bucketTime = getTimeBucket(tick.timestamp, config.intervalMinutes);
+
+            // Find or create the bar for this bucket
+            let barIndex = liveData.bars.findIndex(b => b.time === bucketTime);
+
+            if (barIndex === -1) {
+                // New bar - need to recalculate from scratch for accuracy
+                aggregateTicksToCandles();
+            } else {
+                // Update existing bar incrementally
+                const bar = liveData.bars[barIndex];
+                const priceLevel = Math.round(tick.price / config.tickSize) * config.tickSize;
+
+                // Update OHLC
+                if (tick.price > bar.high) bar.high = tick.price;
+                if (tick.price < bar.low) bar.low = tick.price;
+                bar.close = tick.price;
+
+                // Update footprint
+                let levels = liveData.footprints.get(bucketTime);
+                if (!levels) {
+                    levels = [];
+                    liveData.footprints.set(bucketTime, levels);
+                }
+
+                let levelObj = levels.find(l => l.price === priceLevel);
+                if (!levelObj) {
+                    levelObj = { price: priceLevel, bidVol: 0, askVol: 0 };
+                    levels.push(levelObj);
+                    levels.sort((a, b) => b.price - a.price);
+                }
+
+                if (tick.direction === 'BUY') {
+                    levelObj.askVol += tick.volume;
+                } else {
+                    levelObj.bidVol += tick.volume;
+                }
+
+                // Recalculate stats for this bar
+                let sumAsk = 0, sumBid = 0, minD = Infinity, maxD = -Infinity;
+                for (const lv of levels) {
+                    sumAsk += lv.askVol;
+                    sumBid += lv.bidVol;
+                    const d = lv.askVol - lv.bidVol;
+                    if (d < minD) minD = d;
+                    if (d > maxD) maxD = d;
+                }
+
+                const delta = sumAsk - sumBid;
+                const total = sumAsk + sumBid;
+                const minDeltaMag = Math.abs(Math.min(0, Number.isFinite(minD) ? minD : 0));
+                const maxDeltaMag = Math.max(0, Number.isFinite(maxD) ? maxD : 0);
+
+                // Get previous cumulative delta
+                let prevCumDelta = 0;
+                if (barIndex > 0) {
+                    const prevBar = liveData.bars[barIndex - 1];
+                    const prevStats = barStats.get(prevBar.time);
+                    if (prevStats) prevCumDelta = prevStats.cumDelta;
+                }
+
+                const cumDelta = prevCumDelta + delta;
+                barStats.set(bucketTime, { delta, total, minDeltaMag, maxDeltaMag, cumDelta });
+
+                // Update chart
+                candleSeries.update(bar);
+                draw();
+            }
+        }
+
+        // ---------- Helper & Drawing Functions ----------
+        function dpr() { return window.devicePixelRatio || 1; }
+        function resizeCanvasToDisplaySize(canvas) {
+            const cssW = canvas.clientWidth, cssH = canvas.clientHeight;
+            const ratio = dpr();
+            if (canvas.width !== Math.floor(cssW * ratio) || canvas.height !== Math.floor(cssH * ratio)) {
+                canvas.width = Math.floor(cssW * ratio);
+                canvas.height = Math.floor(cssH * ratio);
+            }
+            const ctx = canvas.getContext('2d');
+            ctx.setTransform(ratio, 0, 0, ratio, 0, 0);
+            return ctx;
+        }
+        function syncCanvasSize() {
+            fpCanvas.style.width = chartContainer.clientWidth + 'px';
+            fpCanvas.style.height = chartContainer.clientHeight + 'px';
+            resizeCanvasToDisplaySize(fpCanvas);
+        }
+        function getVisibleBarsWithX() {
+            const w = fpCanvas.clientWidth || chartContainer.clientWidth;
+            const out = [];
+            for (const b of liveData.bars) {
+                const x = chart.timeScale().timeToCoordinate(b.time);
+                if (x == null) continue;
+                if (x >= -50 && x <= w + 50) out.push({ ...b, x });
+            }
+            return out;
+        }
+        function median(arr) {
+            if (!arr.length) return 0;
+            const s = [...arr].sort((a, b) => a - b);
+            const mid = Math.floor(s.length / 2);
+            return s.length % 2 ? s[mid] : (s[mid - 1] + s[mid]) / 2;
+        }
+        function fmtNum(n) {
+            const sign = n < 0 ? '-' : '';
+            n = Math.abs(n);
+            if (n >= 1e9) return sign + (n / 1e9).toFixed(2).replace(/\.00$/, '') + 'B';
+            if (n >= 1e6) return sign + (n / 1e6).toFixed(2).replace(/\.00$/, '') + 'M';
+            if (n >= 1e3) return sign + (n / 1e3).toFixed(1).replace(/\.0$/, '') + 'K';
+            return (sign ? '-' : '') + String(n);
+        }
+        function drawClampedPillTop(ctx, text, topY, centerX, slotLeft, slotRight, colors, fontPx, minFont = 8) {
+            const padX = 4, padY = 2;
+            let fontSize = fontPx;
+            ctx.font = `${fontSize}px ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace`;
+            let w = Math.ceil(ctx.measureText(text).width + padX * 2);
+            let h = Math.ceil(fontSize + padY * 2);
+
+            const maxW = Math.max(10, Math.floor((slotRight - slotLeft) - 4));
+            while (w > maxW && fontSize > minFont) {
+                fontSize -= 1;
+                ctx.font = `${fontSize}px ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace`;
+                w = Math.ceil(ctx.measureText(text).width + padX * 2);
+                h = Math.ceil(fontSize + padY * 2);
+            }
+            if (w > maxW) return { drawn: false, w: 0, h: 0, y: topY };
+            if (topY + h > fpCanvas.clientHeight - 2) return { drawn: false, w: 0, h: 0, y: topY };
+
+            let x = Math.round(centerX - w / 2);
+            if (x < slotLeft + 2) x = slotLeft + 2;
+            if (x + w > slotRight - 2) x = slotRight - 2 - w;
+            const y = Math.round(topY);
+
+            ctx.fillStyle = colors.bg;
+            ctx.fillRect(x, y, w, h);
+            if (colors.border) { ctx.strokeStyle = colors.border; ctx.strokeRect(x, y, w, h); }
+            ctx.fillStyle = colors.fg;
+            ctx.textBaseline = 'middle';
+            ctx.textAlign = 'center';
+            ctx.fillText(text, x + w / 2, y + h / 2);
+
+            return { drawn: true, w, h, x, y };
+        }
+        function setCandleVisible(visible) {
+            if (visible) {
+                candleSeries.applyOptions({ ...defaultCandleColors });
+            } else {
+                const t = 'rgba(0,0,0,0)';
+                candleSeries.applyOptions({ upColor: t, downColor: t, borderUpColor: t, borderDownColor: t, wickUpColor: t, wickDownColor: t });
+            }
+        }
+        function syncCandleVisibility() {
+            const showNative = (opts.placement === 'overlay') && opts.showCandle;
+            setCandleVisible(showNative);
+        }
+        syncCandleVisibility();
+
+        function draw() {
+            const ctx = resizeCanvasToDisplaySize(fpCanvas);
+            const width = fpCanvas.clientWidth, height = fpCanvas.clientHeight;
+            ctx.clearRect(0, 0, width, height);
+
+            const visibles = getVisibleBarsWithX();
+            if (!visibles.length) return;
+
+            let spacing;
+            if (visibles.length < 2) {
+                spacing = chart.timeScale().options().barSpacing;
+            } else {
+                const dxs = [];
+                for (let i = 1; i < visibles.length; i++) dxs.push(visibles[i].x - visibles[i - 1].x);
+                spacing = Math.max(6, median(dxs));
+            }
+
+            const slotPad = opts.slotPadPx;
+            const panelGap = opts.panelGapPx;
+            const minCellH = 3;
+            const minPanelW = 8;
+
+            let maxBid = 1, maxAsk = 1, maxTotal = 1;
+            for (const vb of visibles) {
+                const levels = liveData.footprints.get(vb.time) || [];
+                for (const lv of levels) {
+                    if (lv.bidVol > maxBid) maxBid = lv.bidVol;
+                    if (lv.askVol > maxAsk) maxAsk = lv.askVol;
+                    const tot = lv.bidVol + lv.askVol;
+                    if (tot > maxTotal) maxTotal = tot;
+                }
+            }
+
+            const drawThinCandle = (vb, rect) => {
+                const yH = candleSeries.priceToCoordinate(vb.high);
+                const yL = candleSeries.priceToCoordinate(vb.low);
+                const yO = candleSeries.priceToCoordinate(vb.open);
+                const yC = candleSeries.priceToCoordinate(vb.close);
+                if ([yH, yL, yO, yC].some(v => v == null)) return;
+                const up = vb.close >= vb.open;
+                const wickColor = 'rgba(148,163,184,0.65)';
+                const bodyColor = up ? 'rgba(16,185,129,0.95)' : 'rgba(239,68,68,0.95)';
+                const cx = Math.round(rect.left + rect.width / 2);
+
+                ctx.strokeStyle = wickColor; ctx.lineWidth = 1;
+                ctx.beginPath(); ctx.moveTo(cx, Math.round(yH)); ctx.lineTo(cx, Math.round(yL)); ctx.stroke();
+
+                const bodyW = Math.max(3, Math.floor(rect.width * 0.75));
+                const bodyLeft = cx - Math.floor(bodyW / 2);
+                const top = Math.round(Math.min(yO, yC));
+                const h = Math.max(1, Math.round(Math.abs(yO - yC)));
+                ctx.fillStyle = bodyColor;
+                ctx.fillRect(bodyLeft, top, bodyW, h);
+            };
+
+            const drawFootprintInRect = (vb, levels, rect) => {
+                if (!levels || levels.length === 0) return;
+
+                const levelsMap = new Map(levels.map(l => [l.price, l]));
+                const minPrice = levels.reduce((p, c) => Math.min(p, c.price), Infinity);
+                const maxPrice = levels.reduce((p, c) => Math.max(p, c.price), -Infinity);
+                if (!isFinite(minPrice) || !isFinite(maxPrice)) return;
+
+                const left = rect.left, width = rect.width, mid = left + width / 2;
+
+                for (let price = maxPrice; price >= minPrice - (config.tickSize / 2); price -= config.tickSize) {
+                    const data = levelsMap.get(price) || { bidVol: 0, askVol: 0 };
+
+                    const y1 = candleSeries.priceToCoordinate(price);
+                    const y2 = candleSeries.priceToCoordinate(price - config.tickSize);
+                    if (y1 == null || y2 == null) continue;
+
+                    const top = Math.min(y1, y2);
+                    const bottom = Math.max(y1, y2);
+                    const cellH = bottom - top;
+
+                    if (cellH < minCellH) continue;
+
+                    const halfW = width / 2;
+
+                    if (opts.heat) {
+                        const bidAlpha = Math.min(0.95, 0.16 + 0.84 * (data.bidVol / maxBid));
+                        const askAlpha = Math.min(0.95, 0.16 + 0.84 * (data.askVol / maxAsk));
+                        ctx.fillStyle = `rgba(239,68,68,${bidAlpha})`;
+                        ctx.fillRect(left, top, halfW, cellH);
+                        ctx.fillStyle = `rgba(16,185,129,${askAlpha})`;
+                        ctx.fillRect(left + halfW, top, halfW, cellH);
+                    } else {
+                        ctx.fillStyle = 'rgba(148,163,184,0.18)';
+                        ctx.fillRect(left, top, width, cellH);
+                    }
+
+                    if (opts.outlines) {
+                        ctx.strokeStyle = 'rgba(148,163,184,0.30)';
+                        ctx.lineWidth = 1;
+                        ctx.strokeRect(Math.round(left), Math.round(top), Math.round(width), Math.round(cellH));
+                        ctx.beginPath(); ctx.moveTo(Math.round(mid), Math.round(top)); ctx.lineTo(Math.round(mid), Math.round(bottom)); ctx.stroke();
+                    }
+
+                    if (opts.drawNumbers && width > 26 && cellH > 12) {
+                        const fontSize = Math.min(12, Math.max(9, Math.floor(Math.min(cellH * 0.75, width * 0.45))));
+                        ctx.font = `${fontSize}px ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace`;
+                        ctx.textBaseline = 'middle';
+                        ctx.fillStyle = '#fecaca'; ctx.textAlign = 'right';
+                        ctx.fillText(String(Math.round(data.bidVol)), mid - 2, top + cellH / 2);
+                        ctx.fillStyle = '#bbf7d0'; ctx.textAlign = 'left';
+                        ctx.fillText(String(Math.round(data.askVol)), mid + 2, top + cellH / 2);
+                    }
+                }
+            };
+
+            const drawProfileInRect = (levels, rect) => {
+                const barMaxTotal = levels.reduce((max, lv) => Math.max(max, lv.bidVol + lv.askVol), 1);
+
+                const levelsMap = new Map(levels.map(l => [l.price, l]));
+                const minPrice = levels.reduce((p, c) => Math.min(p, c.price), Infinity);
+                const maxPrice = levels.reduce((p, c) => Math.max(p, c.price), -Infinity);
+                if (!isFinite(minPrice) || !isFinite(maxPrice)) return;
+
+                for (let price = maxPrice; price >= minPrice - (config.tickSize / 2); price -= config.tickSize) {
+                    const curr = levelsMap.get(price) || { bidVol: 0, askVol: 0 };
+
+                    let y1 = candleSeries.priceToCoordinate(price);
+                    let y2 = candleSeries.priceToCoordinate(price - config.tickSize);
+                    if (y1 == null || y2 == null) continue;
+
+                    let top = Math.min(y1, y2);
+                    let bottom = Math.max(y1, y2);
+                    if (bottom <= top) continue;
+
+                    const cellH = bottom - top;
+                    if (cellH < minCellH) continue;
+
+                    const total = curr.bidVol + curr.askVol;
+                    const w = (total / barMaxTotal) * rect.width;
+                    ctx.fillStyle = 'rgba(59,130,246,0.25)';
+                    ctx.fillRect(rect.left, top, w, cellH);
+
+                    if (opts.drawNumbers && cellH >= 12 && rect.width >= 24) {
+                        ctx.font = '10px ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace';
+                        ctx.fillStyle = '#93c5fd';
+                        ctx.textAlign = 'left';
+                        ctx.textBaseline = 'middle';
+                        ctx.fillText(fmtNum(total), rect.left + 2, top + cellH / 2);
+                    }
+
+                    if (opts.outlines) {
+                        ctx.strokeStyle = 'rgba(148,163,184,0.25)';
+                        ctx.lineWidth = 1;
+                        ctx.strokeRect(Math.round(rect.left), Math.round(top), Math.round(rect.width), Math.round(cellH));
+                    }
+                }
+            };
+
+            const outlinePOC = (levels, rect) => {
+                if (!opts.showPOC || !levels || levels.length === 0) return;
+
+                let pocIdx = -1;
+                let pocTotal = -1;
+
+                for (let j = 0; j < levels.length; j++) {
+                    const lv = levels[j];
+                    const tot = lv.bidVol + lv.askVol;
+                    if (tot > pocTotal) {
+                        pocTotal = tot;
+                        pocIdx = j;
+                    }
+                }
+
+                if (pocIdx < 0) return;
+
+                const poc = levels[pocIdx];
+                const pocTopPrice = poc.price;
+                const pocBottomPrice = poc.price - config.tickSize;
+
+                const y1 = candleSeries.priceToCoordinate(pocTopPrice);
+                const y2 = candleSeries.priceToCoordinate(pocBottomPrice);
+                if (y1 == null || y2 == null) return;
+
+                const top = Math.min(y1, y2);
+                const bottom = Math.max(y1, y2);
+                if (bottom <= top) return;
+
+                ctx.strokeStyle = '#f59e0b';
+                ctx.lineWidth = 2;
+                ctx.strokeRect(Math.round(rect.left), Math.round(top), Math.round(rect.width), Math.round(bottom - top));
+            };
+
+            function drawRightProfile(mode) {
+                if (mode === 'off') return;
+
+                let barsToProcess;
+                if (mode === 'visible') {
+                    barsToProcess = visibles;
+                } else if (mode === 'session') {
+                    if (liveData.bars.length === 0) return;
+                    const lastBarTime = liveData.bars[liveData.bars.length - 1].time;
+                    const sessionDate = new Date(lastBarTime * 1000);
+
+                    const sessionStart = Date.UTC(sessionDate.getUTCFullYear(), sessionDate.getUTCMonth(), sessionDate.getUTCDate(), 0, 0, 0, 0) / 1000;
+                    const sessionEnd = sessionStart + (24 * 60 * 60) - 1;
+
+                    barsToProcess = liveData.bars.filter(b => b.time >= sessionStart && b.time <= sessionEnd);
+                } else {
+                    return;
+                }
+
+                const agg = new Map();
+                let maxAgg = 1, sumAgg = 0;
+                for (const b of barsToProcess) {
+                    const levels = liveData.footprints.get(b.time) || [];
+                    for (const lv of levels) {
+                        const key = lv.price;
+                        const obj = agg.get(key) || { bid: 0, ask: 0 };
+                        obj.bid += lv.bidVol; obj.ask += lv.askVol;
+                        agg.set(key, obj);
+                    }
+                }
+                const rows = Array.from(agg.entries()).map(([price, { bid, ask }]) => ({ price: Number(price), bid, ask, total: bid + ask }));
+                rows.sort((a, b) => a.price - b.price);
+                for (const r of rows) { if (r.total > maxAgg) maxAgg = r.total; sumAgg += r.total; }
+                if (!rows.length) return;
+
+                let pocIdx = 0; for (let i = 1; i < rows.length; i++) if (rows[i].total > rows[pocIdx].total) pocIdx = i;
+                const target = sumAgg * opts.valueAreaPct;
+                let vahIdx = pocIdx, valIdx = pocIdx, acc = rows[pocIdx].total;
+                let L = pocIdx - 1, R = pocIdx + 1;
+                while (acc < target && (L >= 0 || R < rows.length)) {
+                    const leftVal = L >= 0 ? rows[L].total : -1;
+                    const rightVal = R < rows.length ? rows[R].total : -1;
+                    if (rightVal > leftVal) { acc += rightVal; vahIdx = R; R++; }
+                    else { acc += leftVal; valIdx = L; L--; }
+                }
+
+                const profW = Math.min(Math.max(30, opts.rightProfileWidth), Math.floor(width * 0.5));
+                const gap = Math.max(0, opts.rightProfileGap);
+                const right = width - gap;
+                const left = Math.max(0, right - profW);
+
+                ctx.save();
+                ctx.translate(0.5, 0.5);
+
+                for (let i = 0; i < rows.length; i++) {
+                    const r = rows[i];
+                    const y1 = candleSeries.priceToCoordinate(r.price);
+                    const y2 = candleSeries.priceToCoordinate(r.price + config.tickSize);
+                    if (y1 == null || y2 == null) continue;
+                    const top = Math.min(y1, y2), bottom = Math.max(y1, y2);
+                    const h = bottom - top;
+                    if (h < 2) continue;
+
+                    const wTotal = Math.max(1, Math.floor((r.total / maxAgg) * (right - left)));
+                    const askW = Math.round(wTotal * (r.ask / (r.total || 1)));
+                    const bidW = wTotal - askW;
+                    const xAskStart = right - askW;
+                    const xBidStart = xAskStart - bidW;
+
+                    ctx.fillStyle = 'rgba(239,68,68,0.8)';
+                    ctx.fillRect(xBidStart, top, bidW, h);
+                    ctx.fillStyle = 'rgba(16,185,129,0.8)';
+                    ctx.fillRect(xAskStart, top, askW, h);
+
+                    if (h >= 12 && wTotal >= 24) {
+                        ctx.font = '10px ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace';
+                        ctx.fillStyle = '#e5e7eb';
+                        ctx.textAlign = 'right';
+                        ctx.textBaseline = 'middle';
+                        ctx.fillText(fmtNum(r.total), right - 2, top + h / 2);
+                    }
+                    if (opts.showPOC && i === pocIdx) {
+                        ctx.strokeStyle = '#f59e0b';
+                        ctx.lineWidth = 2;
+                        ctx.strokeRect(right - wTotal, top, wTotal, h);
+                    }
+                }
+
+                const vahY1 = candleSeries.priceToCoordinate(rows[vahIdx].price);
+                const vahY2 = candleSeries.priceToCoordinate(rows[vahIdx].price + config.tickSize);
+                const valY1 = candleSeries.priceToCoordinate(rows[valIdx].price);
+                const valY2 = candleSeries.priceToCoordinate(rows[valIdx].price + config.tickSize);
+
+                ctx.setLineDash([4, 3]);
+                ctx.lineWidth = 1.5;
+                ctx.strokeStyle = '#60a5fa';
+                if (vahY1 != null && vahY2 != null) {
+                    const y = Math.round((Math.min(vahY1, vahY2) + Math.max(vahY1, vahY2)) / 2);
+                    ctx.beginPath(); ctx.moveTo(left, y); ctx.lineTo(right, y); ctx.stroke();
+                }
+                ctx.strokeStyle = '#a78bfa';
+                if (valY1 != null && valY2 != null) {
+                    const y = Math.round((Math.min(valY1, valY2) + Math.max(valY1, valY2)) / 2);
+                    ctx.beginPath(); ctx.moveTo(left, y); ctx.lineTo(right, y); ctx.stroke();
+                }
+                ctx.setLineDash([]);
+                ctx.restore();
+            }
+
+            ctx.save();
+            ctx.translate(0.5, 0.5);
+
+            for (let i = 0; i < visibles.length; i++) {
+                const vb = visibles[i];
+                const levels = liveData.footprints.get(vb.time);
+                if (!levels || !levels.length) continue;
+
+                const slotLeft = Math.round(vb.x - spacing / 2 + slotPad);
+                const slotRight = Math.round(vb.x + spacing / 2 - slotPad);
+                const slotW = Math.max(4, slotRight - slotLeft);
+
+                const yLow = candleSeries.priceToCoordinate(vb.low);
+                if (yLow == null) continue;
+                const barYBot = yLow;
+
+                const s = barStats.get(vb.time) || { delta: 0, total: 0, minDeltaMag: 0, maxDeltaMag: 0, cumDelta: 0 };
+                let cRect = null, fRect = null, pRect = null;
+
+                if (opts.placement === 'overlay') {
+                    const fullRect = { left: slotLeft, width: slotW };
+                    if (opts.showProfile) drawProfileInRect(levels, fullRect);
+                    if (opts.showFootprint) drawFootprintInRect(vb, levels, fullRect);
+                    outlinePOC(levels, fullRect);
+                } else {
+                    const active = [];
+                    if (opts.showCandle) active.push('c');
+                    if (opts.showFootprint) active.push('f');
+                    if (opts.showProfile) active.push('p');
+
+                    if (active.length > 0) {
+                        const splits = { ...opts.split };
+                        let totalPct = active.reduce((sum, k) => sum + (splits[k] || 0), 0);
+                        if (totalPct <= 0) {
+                            if (active.length === 2 && active.includes('c') && active.includes('f')) splits.c = 20, splits.f = 80;
+                            else if (active.length === 2 && active.includes('f') && active.includes('p')) splits.f = 50, splits.p = 50;
+                            else { splits.c = 20; splits.f = 50; splits.p = 30; }
+                            totalPct = active.reduce((s, k) => s + (splits[k] || 0), 0);
+                        }
+
+                        const innerW = Math.max(minPanelW, slotW - (active.length - 1) * panelGap);
+                        let cursor = slotLeft;
+                        for (let idx = 0; idx < active.length; idx++) {
+                            const key = active[idx];
+                            const isLast = idx === active.length - 1;
+                            const w = Math.max(minPanelW, Math.floor(innerW * (splits[key] || 0) / totalPct));
+                            const rect = { left: Math.round(cursor), width: w };
+                            if (key === 'c') cRect = rect;
+                            if (key === 'f') fRect = rect;
+                            if (key === 'p') pRect = rect;
+                            cursor += w + (isLast ? 0 : panelGap);
+                        }
+                    }
+
+                    if (cRect && opts.showCandle) drawThinCandle(vb, cRect);
+                    if (pRect && opts.showProfile) { drawProfileInRect(levels, pRect); outlinePOC(levels, pRect); }
+                    if (fRect && opts.showFootprint) { drawFootprintInRect(vb, levels, fRect); outlinePOC(levels, fRect); }
+                }
+
+                if (opts.showStats) {
+                    const centerX = (slotLeft + slotRight) / 2;
+                    const border = 'rgba(148,163,184,0.25)';
+                    const bg = 'rgba(2,6,23,0.66)';
+                    const gap = 2;
+
+                    const yOneTickBelow = candleSeries.priceToCoordinate(vb.low - config.tickSize);
+                    const tickHeight = (yOneTickBelow != null) ? Math.abs(yOneTickBelow - yLow) : 10;
+
+                    let nextTop = Math.min(height - 6, Math.round(barYBot + 1 * tickHeight + 4));
+
+                    let r = drawClampedPillTop(ctx, `cumΔ ${fmtNum(s.cumDelta)}`, nextTop, centerX, slotLeft, slotRight, { bg, border, fg: s.cumDelta >= 0 ? '#60a5fa' : '#f472b6' }, 9);
+                    if (r.drawn) nextTop = r.y + r.h + gap; else continue;
+                    r = drawClampedPillTop(ctx, `Δ ${fmtNum(s.delta)}`, nextTop, centerX, slotLeft, slotRight, { bg, border, fg: s.delta >= 0 ? '#34d399' : '#f87171' }, 10);
+                    if (r.drawn) nextTop = r.y + r.h + gap; else continue;
+                    r = drawClampedPillTop(ctx, `minΔ ${fmtNum(s.minDeltaMag)}`, nextTop, centerX, slotLeft, slotRight, { bg, border, fg: '#f87171' }, 9);
+                    if (r.drawn) nextTop = r.y + r.h + gap; else continue;
+                    r = drawClampedPillTop(ctx, `maxΔ ${fmtNum(s.maxDeltaMag)}`, nextTop, centerX, slotLeft, slotRight, { bg, border, fg: '#34d399' }, 9);
+                    if (r.drawn) nextTop = r.y + r.h + gap; else continue;
+                    drawClampedPillTop(ctx, `Vol ${fmtNum(s.total)}`, nextTop, centerX, slotLeft, slotRight, { bg, border, fg: '#e5e7eb' }, 10);
+                }
+            }
+            ctx.restore();
+            drawRightProfile(opts.rightProfileMode);
+            drawLTPLine();
+        }
+
+        // ---------- LTP Line Drawing ----------
+        function drawLTPLine() {
+            if (!opts.showLTP || liveData.bars.length === 0) return;
+
+            // Get the last bar's close price as LTP
+            const lastBar = liveData.bars[liveData.bars.length - 1];
+            const ltp = lastBar.close;
+
+            const yCoord = candleSeries.priceToCoordinate(ltp);
+            if (yCoord == null) return;
+
+            const ctx = fpCanvas.getContext('2d');
+            const width = fpCanvas.clientWidth;
+            const y = Math.round(yCoord);
+
+            ctx.save();
+            ctx.translate(0.5, 0.5);
+
+            // Draw dashed line across the chart
+            ctx.setLineDash([6, 4]);
+            ctx.strokeStyle = '#3b82f6';
+            ctx.lineWidth = 1.5;
+            ctx.beginPath();
+            ctx.moveTo(0, y);
+            ctx.lineTo(width, y);
+            ctx.stroke();
+            ctx.setLineDash([]);
+
+            ctx.restore();
+        }
+
+        // ---------- DATA HANDLING & SERVER COMMUNICATION ----------
+
+        // --- Broker Connection State ---
+        let brokerState = {
+            connected: false,
+            connecting: false,
+        };
+        let socket = null;  // Socket.IO connection for real-time tick streaming
+        let socketReconnectAttempts = 0;
+        const MAX_SOCKET_RECONNECT = 10;
+        let statusPollInterval = null;
+
+        // --- Lazy Loading State ---
+        let loadedDateRange = {
+            minTimestamp: null,
+            maxTimestamp: null,
+        };
+        let isLoadingHistory = false;
+        let availableDates = []; // List of YYYY-MM-DD
+        let loadedDates = new Set(); // Keep track of loaded days to avoid duplicates
+
+        // --- UI Elements ---
+
+        // --- UI Elements ---
+        const statusEl = document.getElementById('status');
+        const brokerBtn = document.getElementById('broker-connect-btn');
+        const brokerStatusDot = document.getElementById('broker-status-dot');
+        const brokerStatusText = document.getElementById('broker-status-text');
+        const loadingIndicator = document.getElementById('loading-indicator');
+
+        // --- Broker Status Update ---
+        function updateBrokerUI(status) {
+            brokerState = status;
+
+            if (status.connecting) {
+                brokerStatusDot.className = 'status-dot connecting';
+                brokerStatusText.textContent = 'Connecting...';
+                brokerBtn.textContent = 'Connecting...';
+                brokerBtn.className = 'broker-btn connect';
+                brokerBtn.disabled = true;
+            } else if (status.connected) {
+                brokerStatusDot.className = 'status-dot connected';
+                brokerStatusText.textContent = 'Connected';
+                brokerBtn.textContent = 'Disconnect';
+                brokerBtn.className = 'broker-btn disconnect';
+                brokerBtn.disabled = false;
+            } else {
+                brokerStatusDot.className = 'status-dot disconnected';
+                brokerStatusText.textContent = status.last_error ? 'Error' : 'Disconnected';
+                brokerBtn.textContent = 'Connect';
+                brokerBtn.className = 'broker-btn connect';
+                brokerBtn.disabled = false;
+            }
+        }
+
+        async function fetchBrokerStatus() {
+            try {
+                const resp = await fetch('/broker/status');
+                if (resp.ok) {
+                    const status = await resp.json();
+                    updateBrokerUI(status);
+                    return status;
+                }
+            } catch (e) {
+                console.error('Failed to fetch broker status:', e);
+            }
+            return null;
+        }
+
+        async function connectBroker() {
+            try {
+                brokerBtn.disabled = true;
+                brokerBtn.textContent = 'Connecting...';
+
+                const resp = await fetch('/broker/connect', { method: 'POST' });
+                const data = await resp.json();
+
+                if (resp.ok) {
+                    statusEl.textContent = 'Broker connecting...';
+                    // Start polling for status
+                    startStatusPolling();
+                } else {
+                    statusEl.textContent = `Error: ${data.message}`;
+                    brokerBtn.disabled = false;
+                }
+            } catch (e) {
+                console.error('Failed to connect broker:', e);
+                statusEl.textContent = 'Failed to connect to broker';
+                brokerBtn.disabled = false;
+            }
+        }
+
+        async function disconnectBroker() {
+            try {
+                brokerBtn.disabled = true;
+
+                const resp = await fetch('/broker/disconnect', { method: 'POST' });
+                const data = await resp.json();
+
+                if (resp.ok) {
+                    statusEl.textContent = 'Broker disconnected';
+                    // Stop Socket.IO if connected
+                    if (socket) {
+                        socket.disconnect();
+                        socket = null;
+                    }
+                    socketReconnectAttempts = MAX_SOCKET_RECONNECT; // Prevent auto-reconnect
+                }
+
+                await fetchBrokerStatus();
+            } catch (e) {
+                console.error('Failed to disconnect broker:', e);
+            }
+        }
+
+        function startStatusPolling() {
+            if (statusPollInterval) clearInterval(statusPollInterval);
+
+            statusPollInterval = setInterval(async () => {
+                const status = await fetchBrokerStatus();
+
+                if (status && status.connected && !socket) {
+                    // Broker just connected, start Socket.IO
+                    startLiveUpdates();
+                    clearInterval(statusPollInterval);
+                    statusPollInterval = null;
+                } else if (status && !status.connected && !status.connecting) {
+                    // Connection failed or stopped
+                    clearInterval(statusPollInterval);
+                    statusPollInterval = null;
+                    if (status.last_error) {
+                        statusEl.textContent = `Broker error: ${status.last_error}`;
+                    }
+                }
+            }, 1000);
+        }
+
+        // --- Broker Button Handler ---
+        brokerBtn.addEventListener('click', async () => {
+            const status = await fetchBrokerStatus();
+            if (status && status.connected) {
+                await disconnectBroker();
+            } else {
+                await connectBroker();
+            }
+        });
+
+        // --- Date Helper Functions ---
+        function getStartOfDay(timestamp) {
+            const date = new Date(timestamp * 1000);
+            date.setHours(0, 0, 0, 0);
+            return Math.floor(date.getTime() / 1000);
+        }
+
+        function getEndOfDay(timestamp) {
+            const date = new Date(timestamp * 1000);
+            date.setHours(23, 59, 59, 999);
+            return Math.floor(date.getTime() / 1000);
+        }
+
+        function formatYMD(dateObj) {
+            return dateObj.toLocaleDateString('en-CA'); // YYYY-MM-DD
+        }
+
+        // --- Core Data Loading ---
+
+        async function fetchAvailableDates() {
+            try {
+                const resp = await fetch('/history/available_dates');
+                if (resp.ok) {
+                    availableDates = await resp.json();
+                    console.log('Available dates:', availableDates);
+
+                    if (availableDates.length > 0) {
+                        const dateInput = $('goto-date');
+                        dateInput.min = availableDates[0];
+                        dateInput.max = availableDates[availableDates.length - 1];
+                    }
+                }
+            } catch (e) {
+                console.error('Failed to fetch available dates:', e);
+            }
+        }
+
+        function showLoading(message) {
+            loadingIndicator.textContent = message || 'Loading...';
+            loadingIndicator.style.display = 'block';
+        }
+
+        function hideLoading() {
+            loadingIndicator.style.display = 'none';
+        }
+
+        // loadDateStr: YYYY-MM-DD
+        // mergeMode: 'prepend' | 'append' | 'replace'
+        async function loadDayData(loadDateStr, mergeMode = 'replace') {
+            if (isLoadingHistory) return;
+            if (loadedDates.has(loadDateStr) && mergeMode !== 'replace') {
+                console.log(`Date ${loadDateStr} already loaded.`);
+                return;
+            }
+
+            isLoadingHistory = true;
+            showLoading(`Loading ${loadDateStr}...`);
+
+            try {
+                const resp = await fetch(`/history/day?date=${loadDateStr}`);
+                if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+
+                const data = await resp.json();
+
+                if (data.ticks && data.ticks.length > 0) {
+                    const newTicks = data.ticks;
+
+                    if (mergeMode === 'replace') {
+                        rawTicks.length = 0; // Clear array
+                        rawTicks.push(...newTicks);
+                        loadedDates.clear();
+                        loadedDates.add(loadDateStr);
+
+                        // Reset View (optional, maybe keep scale if possible?)
+                        loadedDateRange.minTimestamp = data.start_time;
+                        loadedDateRange.maxTimestamp = data.end_time;
+
+                    } else if (mergeMode === 'prepend') {
+                        rawTicks.unshift(...newTicks);
+                        loadedDates.add(loadDateStr);
+                        loadedDateRange.minTimestamp = Math.min(loadedDateRange.minTimestamp, data.start_time);
+                    } else if (mergeMode === 'append') {
+                        rawTicks.push(...newTicks);
+                        loadedDates.add(loadDateStr);
+                        loadedDateRange.maxTimestamp = Math.max(loadedDateRange.maxTimestamp, data.end_time);
+                    }
+
+                    // Sort to ensure proper order (important for merging)
+                    rawTicks.sort((a, b) => a.timestamp - b.timestamp);
+
+                    // Reaggregate
+                    aggregateTicksToCandles();
+
+                    statusEl.textContent = `Loaded ${loadDateStr} (${newTicks.length} ticks)`;
+                } else {
+                    statusEl.textContent = `No data for ${loadDateStr}`;
+                }
+            } catch (e) {
+                console.error('Failed to load day data:', e);
+                statusEl.textContent = `Error loading history: ${e.message}`;
+            } finally {
+                isLoadingHistory = false;
+                hideLoading();
+            }
+        }
+
+        // --- Navigation Logic ---
+
+        const modal = document.getElementById('load-confirm-modal');
+        const modalTitle = document.getElementById('modal-title');
+        const modalMsg = document.getElementById('modal-msg');
+        const modalYes = document.getElementById('modal-yes');
+        const modalNo = document.getElementById('modal-no');
+
+        let pendingLoadAction = null;
+
+        modalYes.onclick = () => {
+            if (pendingLoadAction) pendingLoadAction();
+            closeModal();
+        };
+        modalNo.onclick = () => closeModal();
+
+        function openModal(title, msg, onYes) {
+            modalTitle.textContent = title;
+            modalMsg.textContent = msg;
+            pendingLoadAction = onYes;
+            modal.style.display = 'flex';
+        }
+
+        function closeModal() {
+            modal.style.display = 'none';
+            pendingLoadAction = null;
+        }
+
+        // Renamed and updated logic
+        async function checkScrollAndLoad() {
+            if (isLoadingHistory || rawTicks.length === 0 || availableDates.length === 0) return;
+
+            const visibleRange = chart.timeScale().getVisibleRange();
+            if (!visibleRange) return;
+
+            const visibleStart = visibleRange.from;
+            const visibleEnd = visibleRange.to;
+
+            // Find current loaded boundaries in YYYY-MM-DD
+            // We use the min/max timestamp of the loaded Raw Ticks, 
+            // but we need to match them to availableDates strings
+
+            const minLoadedTickTime = rawTicks[0].timestamp;
+            const maxLoadedTickTime = rawTicks[rawTicks.length - 1].timestamp;
+
+            const minDateStr = formatYMD(new Date(minLoadedTickTime * 1000));
+            const maxDateStr = formatYMD(new Date(maxLoadedTickTime * 1000));
+
+            const minDateIdx = availableDates.indexOf(minDateStr);
+            const maxDateIdx = availableDates.indexOf(maxDateStr);
+
+            // Scroll to Left (Previous)
+            // Trigger if visible start is close to start of data (e.g. within 15 mins)
+            if ((visibleStart - minLoadedTickTime) < 15 * 60) {
+                if (minDateIdx > 0) {
+                    const prevDate = availableDates[minDateIdx - 1];
+                    if (!loadedDates.has(prevDate) && modal.style.display === 'none') {
+                        openModal("Load Previous Day?", `Reached start of ${minDateStr}. Load data for ${prevDate}?`, () => {
+                            loadDayData(prevDate, 'prepend');
+                        });
+                        return; // Only trigger one at a time
+                    }
+                }
+            }
+
+            // Scroll to Right (Next)
+            if ((maxLoadedTickTime - visibleEnd) < 15 * 60) {
+                if (maxDateIdx !== -1 && maxDateIdx < availableDates.length - 1) {
+                    const nextDate = availableDates[maxDateIdx + 1];
+                    if (!loadedDates.has(nextDate) && modal.style.display === 'none') {
+                        openModal("Load Next Day?", `Reached end of ${maxDateStr}. Load data for ${nextDate}?`, () => {
+                            loadDayData(nextDate, 'append');
+                        });
+                    }
+                }
+            }
+        }
+
+        // --- Wiring ---
+
+        $('goto-date').addEventListener('change', (e) => {
+            const dateStr = e.target.value;
+            if (dateStr) {
+                // Confirm if user wants to jump (replace)
+                // Actually, for "Go To" we usually expect replacement. 
+                // But let's just do it directly without modal for explicit user action on toolbar.
+                loadDayData(dateStr, 'replace');
+            }
+        });
+
+        // --- Initialize Chart ---
+        async function initializeChart() {
+            try {
+                statusEl.textContent = 'Initializing...';
+                await fetchAvailableDates();
+
+                if (availableDates.length > 0) {
+                    // Load the LAST available date by default
+                    const lastDate = availableDates[availableDates.length - 1];
+                    $('goto-date').value = lastDate;
+                    await loadDayData(lastDate, 'replace');
+                } else {
+                    statusEl.textContent = 'No historical data found in DB.';
+                }
+
+                // Initial broker status check
+                await fetchBrokerStatus();
+
+            } catch (error) {
+                console.error("Initialization failed:", error);
+                statusEl.textContent = `Error: ${error.message}`;
+            }
+        }
+
+
+        function startLiveUpdates() {
+            // Close existing connection if any
+            if (socket) {
+                socket.disconnect();
+                socket = null;
+            }
+
+            console.log('Connecting to Socket.IO...');
+
+            // Connect using Socket.IO client
+            socket = io({
+                reconnection: true,
+                reconnectionAttempts: MAX_SOCKET_RECONNECT,
+                reconnectionDelay: 1000,
+                reconnectionDelayMax: 30000,
+            });
+
+            socket.on('connect', () => {
+                console.log('Socket.IO connected');
+                socketReconnectAttempts = 0;
+                statusEl.textContent = `Loaded ${rawTicks.length} ticks. Live streaming via Socket.IO...`;
+            });
+
+            socket.on('tick', (data) => {
+                // Process tick data
+                processIncomingTick(data);
+
+                // Update loaded range
+                if (!loadedDateRange.maxTimestamp || data.timestamp > loadedDateRange.maxTimestamp) {
+                    loadedDateRange.maxTimestamp = data.timestamp;
+                }
+            });
+
+            socket.on('disconnect', (reason) => {
+                console.log('Socket.IO disconnected:', reason);
+
+                if (reason === 'io server disconnect') {
+                    // Server disconnected, need manual reconnect
+                    statusEl.textContent = 'Server disconnected. Checking broker status...';
+                    fetchBrokerStatus();
+                } else {
+                    // Transport error or client disconnect - Socket.IO will auto-reconnect
+                    statusEl.textContent = 'Connection lost. Reconnecting...';
+                }
+            });
+
+            socket.on('connect_error', (error) => {
+                console.error('Socket.IO connection error:', error);
+                socketReconnectAttempts++;
+
+                if (socketReconnectAttempts >= MAX_SOCKET_RECONNECT) {
+                    statusEl.textContent = 'Live stream disconnected. Max reconnection attempts reached.';
+                    socket.disconnect();
+                    socket = null;
+                    fetchBrokerStatus();
+                } else {
+                    statusEl.textContent = `Reconnecting... (attempt ${socketReconnectAttempts})`;
+                }
+            });
+
+            socket.on('pong', () => {
+                console.log('Received pong from server');
+            });
+        }
+
+        $('update-settings').addEventListener('click', () => {
+            config.intervalMinutes = Number($('interval-min').value);
+            config.tickSize = Number($('tick-size').value);
+
+            statusEl.textContent = 'Reaggregating with new settings...';
+
+            // Reaggregate all ticks with new settings
+            aggregateTicksToCandles();
+
+            // Update price format
+            candleSeries.applyOptions({
+                priceFormat: {
+                    type: 'price',
+                    precision: config.tickSize < 1 ? 2 : 0,
+                    minMove: config.tickSize
+                }
+            });
+
+            chart.timeScale().fitContent();
+            statusEl.textContent = 'Settings applied.';
+        });
+
+        // ---------- Wiring & Initial Load ----------
+        const ro = new ResizeObserver(() => {
+            chart.applyOptions({ width: chartContainer.clientWidth, height: chartContainer.clientHeight });
+            syncCanvasSize();
+            draw();
+        });
+        ro.observe(document.getElementById('chart-wrap'));
+
+        // Subscribe to visible range changes for lazy loading
+        chart.timeScale().subscribeVisibleTimeRangeChange(() => {
+            draw();
+            // Debounce lazy loading check
+            clearTimeout(chart._lazyLoadTimeout);
+            chart._lazyLoadTimeout = setTimeout(checkScrollAndLoad, 500);
+        });
+
+        chart.subscribeCrosshairMove(() => draw());
+
+        let lastDpr = dpr();
+        setInterval(() => {
+            const now = dpr();
+            if (now !== lastDpr) { lastDpr = now; syncCanvasSize(); draw(); }
+        }, 500);
+
+        initializeChart();
+
+    </script>
+</body>
+
+</html>
