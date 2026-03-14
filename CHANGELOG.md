@@ -9,14 +9,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.h
 
 ### Added
 
--   **Major Tick Database Support**: Introduced a robust system for tick storage, enabling more granular data analysis.
--   **CSV Data Import**: Added the ability to import market data from CSV files.
--   **New Orderflow Display Modes**:
-    -   **Delta Mode**: Visualizes the net difference between buying and selling pressure at each price level.
-    -   **Profile Mode**: Integrated intra-bar volume profile for detailed activity viewing.
-    -   **Dual Side Profile Mode**: Compare bid and ask volume profiles side-by-side within a single candle.
--   **"Goto Date" Navigation**: Quickly jump to specific historical dates in the chart.
--   **Optional Broker Connectivity**: Support for connecting to brokers is now optional, allowing for offline analysis of stored data.
+-   **Major Architecture Optimization**:
+    -   Transitioned to `app_optimized.py` using `eventlet` for production-grade performance.
+    -   Implemented a decoupled tick processing architecture using background worker greenlets.
+    -   Migrated real-time communication to **SocketIO** for enhanced reliability and lower latency.
+    -   Introduced batch database writing to significantly reduce disk I/O operations.
+-   **New Tick-Level Infrastructure**:
+    -   Full tick-by-tick storage support in `trading_data_ticks.db`.
+    -   Integrated `import_csv_to_db.py` utility for processing and importing historical tick data.
+    -   New `CSV_IMPORT_GUIDE.md` for streamlined data onboarding.
+-   **Advanced Orderflow Visualizations**:
+    -   **Delta Mode**: Real-time visualization of net buying vs. selling pressure.
+    -   **Profile Mode**: Intra-bar volume distribution for precise activity analysis.
+    -   **Dual Side Profile**: Side-by-side bid and ask profiles within a single candle.
+    -   **Diagonal Imbalances**: Highlighting significant order imbalances between aggressive buyers and sellers.
+-   **Improved UX & Navigation**:
+    -   **"Goto Date"**: Quickly jump to any historical trading day.
+    -   Manual broker connection toggle in the UI for better control.
+    -   Support for offline analysis of stored tick data without an active broker connection.
 
 ## [2.0.0] - 2025-09-14
 
