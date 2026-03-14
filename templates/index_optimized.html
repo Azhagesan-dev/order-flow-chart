@@ -271,8 +271,12 @@
             <span id="status"></span>
         </div>
         <div class="group">
-            <label>Go to: <input id="goto-date" type="date"
-                    style="background:#0b1020; color:#e5e7eb; border:1px solid #374151; padding:4px; border-radius:4px;" /></label>
+            <label>Go to:
+                <select id="goto-date"
+                    style="background:#0b1020; color:#e5e7eb; border:1px solid #374151; padding:4px 8px; border-radius:4px; min-width:130px;">
+                    <option value="">Select date...</option>
+                </select>
+            </label>
         </div>
         <div class="group">
             <label>Placement
@@ -309,6 +313,16 @@
             <label><input id="toggle-poc" type="checkbox" checked /> POC</label>
             <label><input id="toggle-ltp" type="checkbox" checked /> LTP Line</label>
             <label><input id="toggle-stats" type="checkbox" checked /> Stats (Δ, minΔ, maxΔ, Vol, cumΔ)</label>
+        </div>
+
+        <div class="group" title="Advanced Orderflow Features">
+            <label><input id="toggle-delta-mode" type="checkbox" /> Delta Mode</label>
+            <label><input id="toggle-profile-mode" type="checkbox" /> Profile Mode</label>
+            <label><input id="toggle-imbalance" type="checkbox" /> Imbalances</label>
+            <label>Ratio <input id="imbalance-ratio" type="number" min="1.5" max="10" step="0.5" value="3"
+                    style="width:50px" /></label>
+            <label><input id="toggle-candle-va" type="checkbox" /> Candle VA</label>
+            <label><input id="toggle-dual-side" type="checkbox" /> Dual Side</label>
         </div>
 
         <div class="group" title="Right-side split profile">
@@ -439,6 +453,13 @@
             split: { c: 20, f: 80, p: 0 }, panelGapPx: 2, slotPadPx: 1,
             drawNumbers: true, heat: true, outlines: false, showPOC: true, showLTP: true, showStats: true,
             rightProfileMode: 'off', rightProfileWidth: 90, rightProfileGap: 70, valueAreaPct: 0.70,
+            // New orderflow features
+            deltaMode: false,           // Show delta instead of bid/ask
+            profileMode: false,         // Show profile bars proportional to volume
+            showImbalance: false,       // Highlight diagonal imbalances
+            imbalanceRatio: 3.0,        // Ratio threshold for imbalance (e.g., 3:1)
+            showCandleVA: false,        // Show per-candle VAH/VAL lines
+            dualSide: false,            // Candle in center, bid left, ask right
         };
         const $ = (id) => document.getElementById(id);
         $('placement').addEventListener('change', e => { opts.placement = e.target.value; syncCandleVisibility(); draw(); });
@@ -462,6 +483,13 @@
         $('right-prof-mode').addEventListener('change', e => { opts.rightProfileMode = e.target.value; draw(); });
         $('right-prof-width').addEventListener('change', e => { opts.rightProfileWidth = Math.max(30, Number(e.target.value || 90)); draw(); });
         $('right-prof-gap').addEventListener('change', e => { opts.rightProfileGap = Math.max(0, Number(e.target.value || 60)); draw(); });
+        // New orderflow feature listeners
+        $('toggle-delta-mode').addEventListener('change', e => { opts.deltaMode = e.target.checked; draw(); });
+        $('toggle-profile-mode').addEventListener('change', e => { opts.profileMode = e.target.checked; draw(); });
+        $('toggle-imbalance').addEventListener('change', e => { opts.showImbalance = e.target.checked; draw(); });
+        $('imbalance-ratio').addEventListener('change', e => { opts.imbalanceRatio = Math.max(1.5, Number(e.target.value || 3)); draw(); });
+        $('toggle-candle-va').addEventListener('change', e => { opts.showCandleVA = e.target.checked; draw(); });
+        $('toggle-dual-side').addEventListener('change', e => { opts.dualSide = e.target.checked; draw(); });
 
         // ---------- Tick Aggregation Logic ----------
         function getTimeBucket(timestamp, intervalMinutes) {
@@ -748,8 +776,25 @@
             const width = fpCanvas.clientWidth, height = fpCanvas.clientHeight;
             ctx.clearRect(0, 0, width, height);
 
+            // Get chart pane bounds to avoid drawing over axes
+            const timeScaleHeight = 30; // Height of time scale at bottom
+            const priceScaleWidth = 65; // Width of price scale on right
+            const chartLeft = 0;
+            const chartTop = 0;
+            const chartWidth = width - priceScaleWidth;
+            const chartHeight = height - timeScaleHeight;
+
+            // Apply clipping region to avoid drawing over axes
+            ctx.save();
+            ctx.beginPath();
+            ctx.rect(chartLeft, chartTop, chartWidth, chartHeight);
+            ctx.clip();
+
             const visibles = getVisibleBarsWithX();
-            if (!visibles.length) return;
+            if (!visibles.length) {
+                ctx.restore();
+                return;
+            }
 
             let spacing;
             if (visibles.length < 2) {
@@ -798,7 +843,8 @@
                 ctx.fillRect(bodyLeft, top, bodyW, h);
             };
 
-            const drawFootprintInRect = (vb, levels, rect) => {
+            const drawFootprintInRect = (vb, levels, rect, side = null) => {
+                // side: null = draw both, 'bid' = bid only, 'ask' = ask only
                 if (!levels || levels.length === 0) return;
 
                 const levelsMap = new Map(levels.map(l => [l.price, l]));
@@ -807,6 +853,34 @@
                 if (!isFinite(minPrice) || !isFinite(maxPrice)) return;
 
                 const left = rect.left, width = rect.width, mid = left + width / 2;
+
+                // Pre-calculate PER-CANDLE max values
+                let candleMaxBid = 1, candleMaxAsk = 1, candleMaxDeltaMag = 1;
+                for (const lv of levels) {
+                    if (lv.bidVol > candleMaxBid) candleMaxBid = lv.bidVol;
+                    if (lv.askVol > candleMaxAsk) candleMaxAsk = lv.askVol;
+                    const delta = Math.abs(lv.askVol - lv.bidVol);
+                    if (delta > candleMaxDeltaMag) candleMaxDeltaMag = delta;
+                }
+
+                // Pre-calculate imbalances
+                const imbalances = new Map();
+                if (opts.showImbalance) {
+                    const sortedPrices = Array.from(levelsMap.keys()).sort((a, b) => b - a);
+                    for (let i = 0; i < sortedPrices.length - 1; i++) {
+                        const currentPrice = sortedPrices[i];
+                        const belowPrice = sortedPrices[i + 1];
+                        const currentData = levelsMap.get(currentPrice) || { bidVol: 0, askVol: 0 };
+                        const belowData = levelsMap.get(belowPrice) || { bidVol: 0, askVol: 0 };
+
+                        if (currentData.askVol > 0 && (belowData.bidVol === 0 || currentData.askVol / belowData.bidVol >= opts.imbalanceRatio)) {
+                            imbalances.set(currentPrice, 'buy');
+                        }
+                        if (belowData.bidVol > 0 && (currentData.askVol === 0 || belowData.bidVol / currentData.askVol >= opts.imbalanceRatio)) {
+                            imbalances.set(belowPrice, 'sell');
+                        }
+                    }
+                }
 
                 for (let price = maxPrice; price >= minPrice - (config.tickSize / 2); price -= config.tickSize) {
                     const data = levelsMap.get(price) || { bidVol: 0, askVol: 0 };
@@ -821,35 +895,113 @@
 
                     if (cellH < minCellH) continue;
 
-                    const halfW = width / 2;
+                    const delta = data.askVol - data.bidVol;
+                    const imbalanceType = imbalances.get(price);
 
-                    if (opts.heat) {
+                    const bidRatio = data.bidVol / candleMaxBid;
+                    const askRatio = data.askVol / candleMaxAsk;
+                    const deltaRatio = candleMaxDeltaMag > 0 ? Math.abs(delta) / candleMaxDeltaMag : 0;
+
+                    // Colors
+                    const getBidColor = (alpha) => imbalanceType === 'sell' ? `rgba(250,204,21,${alpha})` : `rgba(239,68,68,${alpha})`;
+                    const getAskColor = (alpha) => imbalanceType === 'buy' ? `rgba(250,204,21,${alpha})` : `rgba(16,185,129,${alpha})`;
+                    const getDeltaColor = (alpha) => delta >= 0 ? `rgba(16,185,129,${alpha})` : `rgba(239,68,68,${alpha})`;
+
+                    // Drawing logic based on mode and side parameter
+                    if (opts.deltaMode) {
+                        const deltaAlpha = Math.min(0.95, 0.16 + 0.84 * deltaRatio);
+                        if (opts.profileMode || side === 'delta-left') {
+                            const barW = Math.max(2, deltaRatio * width);
+                            ctx.fillStyle = getDeltaColor(deltaAlpha);
+                            if (side === 'delta-left') {
+                                // Draw from right to left (right-aligned) when on left of candle
+                                ctx.fillRect(left + width - barW, top, barW, cellH);
+                            } else {
+                                ctx.fillRect(left, top, barW, cellH);
+                            }
+                        } else {
+                            ctx.fillStyle = getDeltaColor(deltaAlpha);
+                            ctx.fillRect(left, top, width, cellH);
+                        }
+                    } else if (side === 'bid') {
+                        // Bid-only mode: draw bid using full width
+                        const bidAlpha = opts.heat ? Math.min(0.95, 0.16 + 0.84 * bidRatio) : 0.85;
+                        if (opts.profileMode) {
+                            const barW = Math.max(1, bidRatio * width);
+                            ctx.fillStyle = getBidColor(bidAlpha);
+                            ctx.fillRect(left + width - barW, top, barW, cellH);  // Right-aligned
+                        } else {
+                            ctx.fillStyle = getBidColor(bidAlpha);
+                            ctx.fillRect(left, top, width, cellH);
+                        }
+                    } else if (side === 'ask') {
+                        // Ask-only mode: draw ask using full width
+                        const askAlpha = opts.heat ? Math.min(0.95, 0.16 + 0.84 * askRatio) : 0.85;
+                        if (opts.profileMode) {
+                            const barW = Math.max(1, askRatio * width);
+                            ctx.fillStyle = getAskColor(askAlpha);
+                            ctx.fillRect(left, top, barW, cellH);  // Left-aligned
+                        } else {
+                            ctx.fillStyle = getAskColor(askAlpha);
+                            ctx.fillRect(left, top, width, cellH);
+                        }
+                    } else if (opts.profileMode) {
+                        // Profile mode: both sides from center
+                        const halfW = width / 2;
+                        const bidBarW = Math.max(1, bidRatio * halfW);
+                        const askBarW = Math.max(1, askRatio * halfW);
+                        const bidAlpha = opts.heat ? Math.min(0.95, 0.16 + 0.84 * bidRatio) : 0.85;
+                        const askAlpha = opts.heat ? Math.min(0.95, 0.16 + 0.84 * askRatio) : 0.85;
+                        ctx.fillStyle = getBidColor(bidAlpha);
+                        ctx.fillRect(mid - bidBarW, top, bidBarW, cellH);
+                        ctx.fillStyle = getAskColor(askAlpha);
+                        ctx.fillRect(mid, top, askBarW, cellH);
+                    } else if (opts.heat) {
+                        // Cluster/Heatmap mode
+                        const halfW = width / 2;
                         const bidAlpha = Math.min(0.95, 0.16 + 0.84 * (data.bidVol / maxBid));
                         const askAlpha = Math.min(0.95, 0.16 + 0.84 * (data.askVol / maxAsk));
-                        ctx.fillStyle = `rgba(239,68,68,${bidAlpha})`;
+                        ctx.fillStyle = getBidColor(bidAlpha);
                         ctx.fillRect(left, top, halfW, cellH);
-                        ctx.fillStyle = `rgba(16,185,129,${askAlpha})`;
+                        ctx.fillStyle = getAskColor(askAlpha);
                         ctx.fillRect(left + halfW, top, halfW, cellH);
                     } else {
                         ctx.fillStyle = 'rgba(148,163,184,0.18)';
                         ctx.fillRect(left, top, width, cellH);
                     }
 
+                    // Outlines
                     if (opts.outlines) {
                         ctx.strokeStyle = 'rgba(148,163,184,0.30)';
                         ctx.lineWidth = 1;
                         ctx.strokeRect(Math.round(left), Math.round(top), Math.round(width), Math.round(cellH));
-                        ctx.beginPath(); ctx.moveTo(Math.round(mid), Math.round(top)); ctx.lineTo(Math.round(mid), Math.round(bottom)); ctx.stroke();
                     }
 
-                    if (opts.drawNumbers && width > 26 && cellH > 12) {
-                        const fontSize = Math.min(12, Math.max(9, Math.floor(Math.min(cellH * 0.75, width * 0.45))));
+                    // Draw numbers
+                    if (opts.drawNumbers && width > 20 && cellH > 12) {
+                        const fontSize = Math.min(12, Math.max(9, Math.floor(Math.min(cellH * 0.75, width * 0.7))));
                         ctx.font = `${fontSize}px ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace`;
                         ctx.textBaseline = 'middle';
-                        ctx.fillStyle = '#fecaca'; ctx.textAlign = 'right';
-                        ctx.fillText(String(Math.round(data.bidVol)), mid - 2, top + cellH / 2);
-                        ctx.fillStyle = '#bbf7d0'; ctx.textAlign = 'left';
-                        ctx.fillText(String(Math.round(data.askVol)), mid + 2, top + cellH / 2);
+
+                        if (opts.deltaMode) {
+                            ctx.fillStyle = delta >= 0 ? '#bbf7d0' : '#fecaca';
+                            ctx.textAlign = 'center';
+                            const prefix = delta > 0 ? '+' : '';
+                            ctx.fillText(prefix + String(Math.round(delta)), mid, top + cellH / 2);
+                        } else if (side === 'bid') {
+                            ctx.fillStyle = '#fecaca'; ctx.textAlign = 'center';
+                            ctx.fillText(String(Math.round(data.bidVol)), mid, top + cellH / 2);
+                        } else if (side === 'ask') {
+                            ctx.fillStyle = '#bbf7d0'; ctx.textAlign = 'center';
+                            ctx.fillText(String(Math.round(data.askVol)), mid, top + cellH / 2);
+                        } else {
+                            // Cluster mode: center each number in its half
+                            const quarterW = width / 4;
+                            ctx.fillStyle = '#fecaca'; ctx.textAlign = 'center';
+                            ctx.fillText(String(Math.round(data.bidVol)), left + quarterW, top + cellH / 2);
+                            ctx.fillStyle = '#bbf7d0'; ctx.textAlign = 'center';
+                            ctx.fillText(String(Math.round(data.askVol)), left + 3 * quarterW, top + cellH / 2);
+                        }
                     }
                 }
             };
@@ -884,9 +1036,9 @@
                     if (opts.drawNumbers && cellH >= 12 && rect.width >= 24) {
                         ctx.font = '10px ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace';
                         ctx.fillStyle = '#93c5fd';
-                        ctx.textAlign = 'left';
+                        ctx.textAlign = 'center';
                         ctx.textBaseline = 'middle';
-                        ctx.fillText(fmtNum(total), rect.left + 2, top + cellH / 2);
+                        ctx.fillText(fmtNum(total), rect.left + rect.width / 2, top + cellH / 2);
                     }
 
                     if (opts.outlines) {
@@ -929,6 +1081,87 @@
                 ctx.strokeStyle = '#f59e0b';
                 ctx.lineWidth = 2;
                 ctx.strokeRect(Math.round(rect.left), Math.round(top), Math.round(rect.width), Math.round(bottom - top));
+            };
+
+            // Draw per-candle Value Area High (VAH) and Value Area Low (VAL) lines
+            const drawCandleVALines = (levels, rect) => {
+                if (!opts.showCandleVA || !levels || levels.length === 0) return;
+
+                // Sort levels by price ascending for VA calculation
+                const sortedLevels = [...levels].sort((a, b) => a.price - b.price);
+
+                // Calculate total volume and find POC
+                let totalVol = 0;
+                let pocIdx = 0;
+                let maxVol = 0;
+
+                for (let i = 0; i < sortedLevels.length; i++) {
+                    const lv = sortedLevels[i];
+                    const vol = lv.bidVol + lv.askVol;
+                    totalVol += vol;
+                    if (vol > maxVol) {
+                        maxVol = vol;
+                        pocIdx = i;
+                    }
+                }
+
+                if (totalVol === 0 || sortedLevels.length < 2) return;
+
+                // Calculate Value Area (70% of volume around POC)
+                const targetVol = totalVol * opts.valueAreaPct;
+                let accumulatedVol = sortedLevels[pocIdx].bidVol + sortedLevels[pocIdx].askVol;
+                let vahIdx = pocIdx;
+                let valIdx = pocIdx;
+
+                let upperIdx = pocIdx + 1;
+                let lowerIdx = pocIdx - 1;
+
+                while (accumulatedVol < targetVol && (upperIdx < sortedLevels.length || lowerIdx >= 0)) {
+                    const upperVol = upperIdx < sortedLevels.length
+                        ? sortedLevels[upperIdx].bidVol + sortedLevels[upperIdx].askVol
+                        : -1;
+                    const lowerVol = lowerIdx >= 0
+                        ? sortedLevels[lowerIdx].bidVol + sortedLevels[lowerIdx].askVol
+                        : -1;
+
+                    if (upperVol >= lowerVol && upperVol > 0) {
+                        accumulatedVol += upperVol;
+                        vahIdx = upperIdx;
+                        upperIdx++;
+                    } else if (lowerVol > 0) {
+                        accumulatedVol += lowerVol;
+                        valIdx = lowerIdx;
+                        lowerIdx--;
+                    } else {
+                        break;
+                    }
+                }
+
+                // Get VAH and VAL prices
+                const vahPrice = sortedLevels[vahIdx].price;
+                const valPrice = sortedLevels[valIdx].price;
+
+                // Draw VAH line (white, at top of the price level)
+                const vahY = candleSeries.priceToCoordinate(vahPrice);
+                if (vahY != null) {
+                    ctx.strokeStyle = '#ffffff';
+                    ctx.lineWidth = 1.5;
+                    ctx.beginPath();
+                    ctx.moveTo(Math.round(rect.left), Math.round(vahY));
+                    ctx.lineTo(Math.round(rect.left + rect.width), Math.round(vahY));
+                    ctx.stroke();
+                }
+
+                // Draw VAL line (white, at bottom of the price level)
+                const valY = candleSeries.priceToCoordinate(valPrice - config.tickSize);
+                if (valY != null) {
+                    ctx.strokeStyle = '#ffffff';
+                    ctx.lineWidth = 1.5;
+                    ctx.beginPath();
+                    ctx.moveTo(Math.round(rect.left), Math.round(valY));
+                    ctx.lineTo(Math.round(rect.left + rect.width), Math.round(valY));
+                    ctx.stroke();
+                }
             };
 
             function drawRightProfile(mode) {
@@ -1064,6 +1297,99 @@
                     if (opts.showProfile) drawProfileInRect(levels, fullRect);
                     if (opts.showFootprint) drawFootprintInRect(vb, levels, fullRect);
                     outlinePOC(levels, fullRect);
+                    drawCandleVALines(levels, fullRect);
+                } else if (opts.dualSide && opts.showFootprint) {
+                    // Dual Side mode: Bid footprint | Candle | Ask footprint (+ optional Profile)
+                    const splits = { ...opts.split };
+                    const fPct = splits.f || 80;
+                    const cPct = Math.min(10, splits.c || 10); // Smaller candle in dual side
+                    const pPct = opts.showProfile ? (splits.p || 30) : 0;
+
+                    // Calculate widths - profile handled separately
+                    const numGaps = opts.showProfile ? 3 : 2; // gaps between panels
+                    const innerW = Math.max(minPanelW, slotW - numGaps * panelGap);
+
+                    const totalPct = (opts.deltaMode ? fPct : fPct) + cPct + pPct;
+
+                    let bidW, askW, candleW, profileW;
+                    if (opts.deltaMode) {
+                        // Delta mode: single footprint panel (no bid/ask split)
+                        // Only include candle in calculation if enabled
+                        const effectiveCPct = opts.showCandle ? cPct : 0;
+                        const effectiveNumGaps = (opts.showCandle ? 1 : 0) + (opts.showProfile ? 1 : 0);
+                        const effectiveInnerW = Math.max(minPanelW, slotW - effectiveNumGaps * panelGap);
+                        const effectiveTotalPct = fPct + effectiveCPct + pPct;
+
+                        const footprintW = Math.max(minPanelW, Math.floor(effectiveInnerW * fPct / effectiveTotalPct));
+                        candleW = opts.showCandle ? Math.max(minPanelW, Math.floor(effectiveInnerW * effectiveCPct / effectiveTotalPct)) : 0;
+                        profileW = opts.showProfile ? Math.max(minPanelW, Math.floor(effectiveInnerW * pPct / effectiveTotalPct)) : 0;
+
+                        let cursor = slotLeft;
+                        const footprintRect = { left: cursor, width: footprintW };
+                        cursor += footprintW;
+
+                        // Draw footprint with right-to-left bar direction (since it's on left of candle)
+                        drawFootprintInRect(vb, levels, footprintRect, 'delta-left');
+
+                        if (opts.showCandle) {
+                            cursor += panelGap;
+                            const candleRect = { left: cursor, width: candleW };
+                            drawThinCandle(vb, candleRect);
+                            cursor += candleW;
+                        }
+
+                        if (opts.showProfile) {
+                            cursor += panelGap;
+                            const profileRect = { left: cursor, width: profileW };
+                            drawProfileInRect(levels, profileRect);
+                            outlinePOC(levels, profileRect);
+                        }
+
+                        outlinePOC(levels, footprintRect);
+                        drawCandleVALines(levels, footprintRect);
+                    } else {
+                        // Normal dual side: Bid | Candle? | Ask (+ Profile)
+                        const bidAskPct = fPct / 2;
+                        const effectiveCPct = opts.showCandle ? cPct : 0;
+                        const effectiveNumGaps = (opts.showCandle ? 2 : 1) + (opts.showProfile ? 1 : 0);
+                        const effectiveInnerW = Math.max(minPanelW, slotW - effectiveNumGaps * panelGap);
+                        const totalWithBidAsk = bidAskPct + effectiveCPct + bidAskPct + pPct;
+
+                        bidW = Math.max(minPanelW, Math.floor(effectiveInnerW * bidAskPct / totalWithBidAsk));
+                        candleW = opts.showCandle ? Math.max(minPanelW, Math.floor(effectiveInnerW * effectiveCPct / totalWithBidAsk)) : 0;
+                        askW = Math.max(minPanelW, Math.floor(effectiveInnerW * bidAskPct / totalWithBidAsk));
+                        profileW = opts.showProfile ? Math.max(minPanelW, Math.floor(effectiveInnerW * pPct / totalWithBidAsk)) : 0;
+
+                        let cursor = slotLeft;
+                        const bidRect = { left: cursor, width: bidW };
+                        cursor += bidW + panelGap;
+
+                        let candleRect = null;
+                        if (opts.showCandle) {
+                            candleRect = { left: cursor, width: candleW };
+                            cursor += candleW + panelGap;
+                        }
+
+                        const askRect = { left: cursor, width: askW };
+                        cursor += askW;
+
+                        drawFootprintInRect(vb, levels, bidRect, 'bid');
+                        if (opts.showCandle && candleRect) drawThinCandle(vb, candleRect);
+                        drawFootprintInRect(vb, levels, askRect, 'ask');
+
+                        if (opts.showProfile) {
+                            cursor += panelGap;
+                            const profileRect = { left: cursor, width: profileW };
+                            drawProfileInRect(levels, profileRect);
+                            outlinePOC(levels, profileRect);
+                        }
+
+                        // POC and VA on bid+ask combined
+                        const combinedWidth = opts.showCandle ? (bidW + panelGap + candleW + panelGap + askW) : (bidW + panelGap + askW);
+                        const footprintCombinedRect = { left: bidRect.left, width: combinedWidth };
+                        outlinePOC(levels, footprintCombinedRect);
+                        drawCandleVALines(levels, footprintCombinedRect);
+                    }
                 } else {
                     const active = [];
                     if (opts.showCandle) active.push('c');
@@ -1095,8 +1421,8 @@
                     }
 
                     if (cRect && opts.showCandle) drawThinCandle(vb, cRect);
-                    if (pRect && opts.showProfile) { drawProfileInRect(levels, pRect); outlinePOC(levels, pRect); }
-                    if (fRect && opts.showFootprint) { drawFootprintInRect(vb, levels, fRect); outlinePOC(levels, fRect); }
+                    if (pRect && opts.showProfile) { drawProfileInRect(levels, pRect); outlinePOC(levels, pRect); drawCandleVALines(levels, pRect); }
+                    if (fRect && opts.showFootprint) { drawFootprintInRect(vb, levels, fRect); outlinePOC(levels, fRect); drawCandleVALines(levels, fRect); }
                 }
 
                 if (opts.showStats) {
@@ -1192,11 +1518,19 @@
             brokerState = status;
 
             if (status.connecting) {
-                brokerStatusDot.className = 'status-dot connecting';
-                brokerStatusText.textContent = 'Connecting...';
-                brokerBtn.textContent = 'Connecting...';
-                brokerBtn.className = 'broker-btn connect';
-                brokerBtn.disabled = true;
+                if (status.reconnect_attempts > 0) {
+                    brokerStatusDot.className = 'status-dot connecting';
+                    brokerStatusText.textContent = `Reconnecting (${status.reconnect_attempts}/${status.max_reconnect_attempts})...`;
+                    brokerBtn.textContent = 'Stop Retrying';
+                    brokerBtn.className = 'broker-btn disconnect';
+                    brokerBtn.disabled = false; // Allow user to cancel/disconnect during retry
+                } else {
+                    brokerStatusDot.className = 'status-dot connecting';
+                    brokerStatusText.textContent = 'Connecting...';
+                    brokerBtn.textContent = 'Connecting...';
+                    brokerBtn.className = 'broker-btn connect';
+                    brokerBtn.disabled = true;
+                }
             } else if (status.connected) {
                 brokerStatusDot.className = 'status-dot connected';
                 brokerStatusText.textContent = 'Connected';
@@ -1297,7 +1631,8 @@
         // --- Broker Button Handler ---
         brokerBtn.addEventListener('click', async () => {
             const status = await fetchBrokerStatus();
-            if (status && status.connected) {
+            if (status && (status.connected || status.connecting)) {
+                // Disconnect if connected OR if currently connecting/retrying
                 await disconnectBroker();
             } else {
                 await connectBroker();
@@ -1330,10 +1665,24 @@
                     availableDates = await resp.json();
                     console.log('Available dates:', availableDates);
 
-                    if (availableDates.length > 0) {
-                        const dateInput = $('goto-date');
-                        dateInput.min = availableDates[0];
-                        dateInput.max = availableDates[availableDates.length - 1];
+                    // Populate the date dropdown with available dates only
+                    const dateSelect = $('goto-date');
+                    // Clear existing options except the placeholder
+                    dateSelect.innerHTML = '<option value="">Select date...</option>';
+
+                    // Add dates in reverse order (newest first) for better UX
+                    for (let i = availableDates.length - 1; i >= 0; i--) {
+                        const dateStr = availableDates[i];
+                        const option = document.createElement('option');
+                        option.value = dateStr;
+                        // Format date for display (e.g., "26 Jan 2026")
+                        const dateObj = new Date(dateStr + 'T00:00:00');
+                        option.textContent = dateObj.toLocaleDateString('en-GB', {
+                            day: '2-digit',
+                            month: 'short',
+                            year: 'numeric'
+                        });
+                        dateSelect.appendChild(option);
                     }
                 }
             } catch (e) {
@@ -1516,7 +1865,12 @@
                 }
 
                 // Initial broker status check
-                await fetchBrokerStatus();
+                const status = await fetchBrokerStatus();
+                if (status && (status.connected || status.connecting)) {
+                    // If already connected/connecting on load, start polling loop
+                    // The polling loop will trigger startLiveUpdates() when it sees 'connected'
+                    startStatusPolling();
+                }
 
             } catch (error) {
                 console.error("Initialization failed:", error);
